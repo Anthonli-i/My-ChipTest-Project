@@ -1,0 +1,7 @@
+TimingName,Period,Signal,WFC,Evt0 Event,Evt0 Expr,Evt1 Event,Evt1 Expr,Evt2 Event,Evt2 Expr,Evt3 Event,Evt3 Expr
+WFT_TRIM,1000ns,ALLPIN,0,D,0ns,,,,,,
+,,,1,U,0ns,,,,,,
+,,,H,H,500ns,,,,,,
+,,,L,L,500ns,,,,,,
+,,,X,X,500ns,,,,,,
+,,,2,T,0ns,,,,,,

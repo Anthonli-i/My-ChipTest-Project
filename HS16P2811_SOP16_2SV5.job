@@ -1,0 +1,20 @@
+{
+	"JOB":"2.0",
+	"jobDir":"D:\\MINI-ATE\\workspace\\HS16P2811_SOP16_2SV5",
+	"jobFilePath":"D:\\MINI-ATE\\workspace\\HS16P2811_SOP16_2SV5\\HS16P2811_SOP16_2SV5.job",
+	"Name":"HS16P2811_SOP16_2SV5",
+	"Date":"2022-03-30 11:51:53",
+	"ResDef":"HS16P2811_SOP16_2SV5.res",
+	"SigMap":"HS16P2811_SOP16_2SV5.sig",
+	"Pattern":"HS16P2811_SOP16_2SV5.pat",
+	"Timing":"HS16P2811_SOP16_2SV5.tim",
+	"TestProg":{
+		
+	},
+	"Library":"Test.dll",
+	"Makefile":"Makefile",
+	"TMF":"HS16P2811_SOP16_2SV5.tmf",
+	"AteHomePath":"d:\\MINI-ATE",
+	"SigGroup":"HS16P2811_SOP16_2SV5.grp",
+	"lotId":"HS6001_CP3"
+}

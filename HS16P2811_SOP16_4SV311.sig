@@ -1,0 +1,15 @@
+SigName,AFEType,ChType,Site0_CH,Site1_CH
+"VDD",DIO,Inout,1:1:31,1:1:23
+"P02",DIO,Inout,1:1:30,1:1:22
+"P03",DIO,Inout,1:1:29,1:1:21
+"VPP",DIO,Inout,1:1:8,1:1:0
+"P05",DIO,Inout,1:1:27,1:1:19
+"P06",DIO,Inout,1:1:26,1:1:18
+"P07",DIO,Inout,1:1:25,1:1:17
+"P10",DIO,Inout,1:1:9,1:1:1
+"P11",DIO,Inout,1:1:10,1:1:2
+"P12",DIO,Inout,1:1:11,1:1:3
+"P13",DIO,Inout,1:1:12,1:1:4
+"PDA",DIO,Inout,1:1:13,1:1:5
+"PCK",DIO,Inout,1:1:14,1:1:6
+"TMU_CH29",TMU,Supply,1:1:2,1:1:3

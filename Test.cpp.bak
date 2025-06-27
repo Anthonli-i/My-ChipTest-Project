@@ -1,0 +1,3452 @@
+#include "interface.h"
+#include <iostream>
+#include <string>
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+
+using namespace std; // @suppress("Symbol is not resolved")
+unsigned long SITE = 0, SITE_ID = 0, ACTIVE_SITE_NUM = 0;
+
+#define SITE_NUM 2
+//#define UPDATE_VCT_NUM8 8
+#define UPDATE_VCT_NUM16 16
+#define Vvref_VOLT125 1.25
+#define Vvref_VOLT15 1.5005
+#define Vvref_VOLT20 2.001
+#define Vvref_VOLT30 3.001
+#define FvrefL  31250
+#define FvrefH  62500
+
+ULONG gVrefData[SITE_NUM] = {0x0000,0x0000};
+ULONG gVrefData1P5[SITE_NUM] = {0x0000,0x0000};
+ULONG gVrefData2P0[SITE_NUM] = {0x0000,0x0000};
+ULONG gVrefData3P0[SITE_NUM] = {0x0000,0x0000};
+ULONG gFrefDataL[SITE_NUM] = {0x0000,0x0000};
+ULONG gFrefDataH[SITE_NUM] = {0x0000,0x0000};
+ULONG gVreftempData[SITE_NUM] = {0x0000,0x0000};
+
+
+ULONG gTrimOK_Count[SITE_NUM] = {0};
+ULONG gFTrimOK_Count[SITE_NUM] = {0};
+int minOK_Count[SITE_NUM] = {0};
+
+ULONG ulTrimDataOk1 = 0, ulTrimDataOk2 = 0;
+double dbTrimValue1 = 0, dbTrimValue2 = 0;
+int iCount = 0;
+
+USER_CODE void ProjectReuse() {
+  cout << "ProjectReuse" << endl;
+}
+
+USER_CODE void ProjectInit() {
+  cout << "ProjectInit" << endl;
+}
+
+USER_CODE void ProjectReset() {
+  cout << "ProjectReset" << endl;
+}
+
+USER_CODE void site_init() {
+  cout << "site_init" << endl;
+}
+
+USER_CODE void site_reset() {
+  cout << "site_reset" << endl;
+}
+
+void EndOfWafer() {
+  cout << "EndOfWafer" << endl;
+}
+
+void EndOfLot() {
+  cout << "EndOfLot" << endl;
+}
+
+inline void Enable_EOW_Func() {
+  proberObj.EnableWaferEndCheck(EndOfWafer);
+}
+
+inline void Enable_EOL_Func() {
+  proberObj.EnableLotEndCheck(EndOfLot);
+}
+
+void Plvl_Set(string strSigName)
+{
+	pinlevel.Signal(strSigName).Connect();
+	sys.DelayUs(2000);
+	pinlevel.Signal(strSigName).SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+}
+
+void UpdateVvref(string patName, int iLen, char *ch)
+{
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+3, "PDA", "0");
+		}
+
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert", i*4, "PDA", (ch[j] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+1, "PDA", (ch[j] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+2, "PDA", (ch[j] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+3, "PDA", (ch[j] == '0') ? "0" : "1");
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+}
+
+void UpdatevrefPat2(string patName, ULONG siteID)
+{
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	//update AD2V TrimData
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimWritePat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4+3, "PDA", "0");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "0" : "1";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4+1, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4+2, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_vref", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update IPvref Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+}
+void UpdatevrefPat(string patName, ULONG siteID)
+{
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	//update AD2V TrimData
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimWritePat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+3, "PDA", "0");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "0" : "1";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert", i*4, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert", i*4+1, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert", i*4+2, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update IPvref Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+}
+void UpdatevrefP1523(string patName, ULONG siteID)
+{
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	//update AD1.5V TrimData
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData1P5[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimWritePat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4+3, "PDA", "0");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "0" : "1";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4+1, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4+2, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_p15", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update IPvref Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+//  p2.0
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData2P0[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimWritePat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4+3, "PDA", "0");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "0" : "1";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4+1, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4+2, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_p2", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update IPvref Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+	//  p3.0
+		memset(ch, 0, UPDATE_VCT_NUM16);
+		strData = to_string(gVrefData3P0[siteID]);
+		pTemp = strData.c_str();
+		ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+		pch = &ch[0];
+		iLen = strlen(pch);
+
+	//	cout << "UpdateTrimWritePat, iLen:" << iLen << endl;
+
+		if(iLen < UPDATE_VCT_NUM16)
+		{
+			int i = 0;
+			int j = 0;
+			//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+			for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+			{
+				//第一个开始update data为ch[0],ch[1]......
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4, "PDA", "0");
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4+1, "PDA", "0");
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4+2, "PDA", "0");
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4+3, "PDA", "0");
+	//			cout << "i: " << i << endl;
+			}
+
+			string wfc;
+			//接着update data为ch[0],ch[1]......
+			for(; j < iLen; i++,j++)
+			{
+				wfc = (ch[j] == '0') ? "0" : "1";
+				//第一个开始update data为ch[0],ch[1]......
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4, "PDA", wfc);
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4+1, "PDA", wfc);
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4+2, "PDA", wfc);
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4+3, "PDA", wfc);
+	//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+			}
+		}
+		else if(iLen == UPDATE_VCT_NUM16)
+		{
+			for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+			{
+				//第一个开始update data为ch[0],ch[1]......
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+				dio.Pattern(patName).UpdateVctData("insert_p3", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+			}
+		}
+		else
+		{
+			cout << "update IPvref Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+		}
+
+}
+
+void Updatevref46Pat(string patName, ULONG siteID,ULONG trimdata_temp)
+{
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+	gVreftempData[siteID]=trimdata_temp;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData[siteID]); //vref
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimWritePat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+3, "PDA", "0");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "0" : "1";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert", i*4, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert", i*4+1, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert", i*4+2, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update IPvref Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVreftempData[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert1", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert1", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert1", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert1", i*4+3, "PDA", "0");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "0" : "1";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert1", i*4, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert1", i*4+1, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert1", i*4+2, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert1", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert1", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert1", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert1", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert1", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update IPvref1 Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVreftempData[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert2", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert2", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert2", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert2", i*4+3, "PDA", "0");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "0" : "1";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert2", i*4, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert2", i*4+1, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert2", i*4+2, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert2", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert2", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert2", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert2", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert2", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update IPvref2 Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVreftempData[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert3", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert3", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert3", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert3", i*4+3, "PDA", "0");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "0" : "1";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert3", i*4, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert3", i*4+1, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert3", i*4+2, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert3", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert3", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert3", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert3", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert3", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update IPvref3 Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+}
+void UpdateClkPat(string patName, ULONG siteID)
+{
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	//	gFrefDataL[SITE]
+	//	gFrefDataH[SITE]
+
+	//update gFrefDataL  TrimData
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gFrefDataH[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimWritePat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+3, "PDA", "0");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "0" : "1";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+1, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+2, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update IPvref Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+
+	//update gFrefData16  TrimData
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gFrefDataL[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimWritePat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4+3, "PDA", "0");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "0" : "1";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4+1, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4+2, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_lclk", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update IPvref Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+}
+
+void UpdateHClkPat(string patName, ULONG siteID)
+{
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gFrefDataH[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimWritePat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+1, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+2, "PDA", "0");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+3, "PDA", "0");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "0" : "1";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+1, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+2, "PDA", wfc);
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+1, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+2, "PDA", (ch[i] == '0') ? "0" : "1");
+			dio.Pattern(patName).UpdateVctData("insert_hclk", i*4+3, "PDA", (ch[i] == '0') ? "0" : "1");
+		}
+	}
+	else
+	{
+		cout << "update IPvref Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+}
+void UpdateTrimVerifyPat(string patName, ULONG siteID)
+{
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+//	sys.PrintDatalog("SITE[%d] ,gVrefData:%x, gVrefData1p5:%x,gVrefData2p0:%x,gVrefData3p0:%x\n", SITE,gVrefData[SITE],gVrefData1P5[SITE],gVrefData2P0[SITE],gVrefData3P0[SITE]);
+//    sys.PrintDatalog("SITE[%d] ,gFrefDataL:%x,gFrefDataH:%x \n", SITE,gFrefDataL[SITE],gFrefDataH[SITE]);
+
+	//update hclk TrimData
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gFrefDataH[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimVerifyPat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM16 - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4+1, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4+2, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4+3, "PDA", "L");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "L" : "H";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4+1, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4+2, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4+1, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4+2, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_hclk", i*4+3, "PDA", (ch[i] == '0') ? "L" : "H");
+		}
+	}
+	else
+	{
+		cout << "update hclk Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+	//update lclk TrimData
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gFrefDataL[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimVerifyPat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM16 - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4+1, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4+2, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4+3, "PDA", "L");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "L" : "H";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4+1, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4+2, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4+1, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4+2, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_lclk", i*4+3, "PDA", (ch[i] == '0') ? "L" : "H");
+		}
+	}
+	else
+	{
+		cout << "update lclk Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+	//update vref  TrimData
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimVerifyPat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM16 - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4+1, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4+2, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4+3, "PDA", "L");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "L" : "H";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4+1, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4+2, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4+1, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4+2, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_vref", i*4+3, "PDA", (ch[i] == '0') ? "L" : "H");
+		}
+	}
+	else
+	{
+		cout << "update vrefMode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+	//update p1.5  TrimData
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData1P5[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimVerifyPat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM16 - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4+1, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4+2, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4+3, "PDA", "L");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "L" : "H";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4+1, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4+2, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4+1, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4+2, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p15", i*4+3, "PDA", (ch[i] == '0') ? "L" : "H");
+		}
+	}
+	else
+	{
+		cout << "update p15 Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+	//update p2.0 TrimData
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData2P0[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimVerifyPat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM16 - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4+1, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4+2, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4+3, "PDA", "L");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "L" : "H";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4+1, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4+2, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4+1, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4+2, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p2", i*4+3, "PDA", (ch[i] == '0') ? "L" : "H");
+		}
+	}
+	else
+	{
+		cout << "update p2 Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+	//update p3.0 TrimData
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData3P0[siteID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+//	cout << "UpdateTrimVerifyPat, iLen:" << iLen << endl;
+
+	if(iLen < UPDATE_VCT_NUM16)
+	{
+		int i = 0;
+		int j = 0;
+		//update 前（UPDATE_VCT_NUM16 - iLen）个vct为0
+		for(i = 0; i < UPDATE_VCT_NUM16 - iLen; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4+1, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4+2, "PDA", "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4+3, "PDA", "L");
+//			cout << "i: " << i << endl;
+		}
+
+		string wfc;
+		//接着update data为ch[0],ch[1]......
+		for(; j < iLen; i++,j++)
+		{
+			wfc = (ch[j] == '0') ? "L" : "H";
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4+1, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4+2, "PDA", (ch[j] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4+3, "PDA", wfc);
+//			cout << "i: " << i << ", j: " << j << ", ch: " << ch[j] << ", wfc:" << wfc << endl;
+		}
+	}
+	else if(iLen == UPDATE_VCT_NUM16)
+	{
+		for(int i = 0; i < UPDATE_VCT_NUM16; i++)
+		{
+			//第一个开始update data为ch[0],ch[1]......
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4+1, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4+2, "PDA", (ch[i] == '0') ? "X" : "X");
+			dio.Pattern(patName).UpdateVctData("insertx_p3", i*4+3, "PDA", (ch[i] == '0') ? "L" : "H");
+		}
+	}
+	else
+	{
+		cout << "update p3 Mode vct num is err("<< iLen << ", " << UPDATE_VCT_NUM16 << ")" << endl;
+	}
+
+}
+
+int TrimfreProcessH(ULONG trimdata, ULONG ulSite, string patName,  double &dbCurFRE)
+{                                                                  //Fvref8M, dbCurFRE
+	vector<ST_MEAS_RESULT> stTMUMeasResult;
+	ULONG ulTrimData;
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	ulTrimData = trimdata;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(ulTrimData);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref(patName, iLen, ch);
+
+	dio.Pattern(patName).Run("cycle_start").WaitEnd();
+	sys.DelayUs(10000);
+
+	tmu.Freq().Signal("TMU_CH27").StartMeas();
+	tmu.Freq().Signal("TMU_CH27").GetMeasResult(stTMUMeasResult);
+	//tmu.DisConnect("TMU_CH09");
+	sys.DelayUs(10000);
+
+	sys.PrintDatalog("SITE[%d] %d time means Freq(P13/P14): %f, trimdata:%0x \n", SITE_ID, iCount, stTMUMeasResult[0].dbValue, ulTrimData);
+	iCount++;
+	dbCurFRE = stTMUMeasResult[0].dbValue;
+
+	return gFTrimOK_Count[ulSite];
+}
+int TrimfreProcessL(ULONG trimdata, ULONG ulSite, string patName,  double &dbCurFRE)
+{                                                                  //Fvref8M, dbCurFRE
+	vector<ST_MEAS_RESULT> stTMUMeasResult;
+	ULONG ulTrimData;
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	ulTrimData = trimdata;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(ulTrimData);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref(patName, iLen, ch);
+
+	dio.Pattern(patName).Run("cycle_start").WaitEnd();
+	sys.DelayUs(10000);
+
+	tmu.Freq().Signal("TMU_CH26").StartMeas();
+	tmu.Freq().Signal("TMU_CH26").GetMeasResult(stTMUMeasResult);
+	sys.DelayUs(10000);
+
+	sys.PrintDatalog("SITE[%d] %d time means Freq(P13/P14): %f, trimdata:%0x \n", SITE_ID, iCount, stTMUMeasResult[0].dbValue, ulTrimData);
+	iCount++;
+	dbCurFRE = stTMUMeasResult[0].dbValue;
+
+	return gFTrimOK_Count[ulSite];
+}
+int TrimvoltProcess(ULONG trimdata, ULONG ulSite, string patName, double &CurVolt)
+//int TrimvoltProcess(ULONG trimdata, ULONG ulSite, string patName, double trimVolt, double &CurVolt)
+{
+	vector<ST_MEAS_RESULT> PpmuResult;
+	ULONG ulTrimData;
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	ulTrimData = trimdata;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(ulTrimData);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+	UpdateVvref(patName, iLen, ch);
+
+//	Plvl_Set("PIN_VREF");
+	dio.Pattern(patName).Run("cycle_start").WaitEnd();
+	sys.DelayUs(1000);
+
+	ppmu.Signal("PIN_VREF").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+	PpmuResult.clear();
+	ppmu.Measure(PpmuResult,MEAS_AVG,50,50);
+	sys.PrintDatalog("SITE[%d] %d time meas volt(PIN_VREF): %f, trimdata:%x \n", SITE_ID, iCount, PpmuResult[0].dbValue, ulTrimData);
+	iCount++;
+	CurVolt = PpmuResult[0].dbValue;
+	return gTrimOK_Count[ulSite];
+}
+int TrimvoltProcess04(ULONG trimdata, ULONG ulSite, string patName, double &CurVolt)
+{
+	vector<ST_MEAS_RESULT> PpmuResult;
+	ULONG ulTrimData;
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	ulTrimData = trimdata;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(ulTrimData);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+	UpdateVvref(patName, iLen, ch);
+
+//	Plvl_Set("PIN_ADOUT");
+	dio.Pattern(patName).Run("cycle_start").WaitEnd();
+	sys.DelayUs(1000);
+
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+	PpmuResult.clear();
+	ppmu.Measure(PpmuResult,MEAS_AVG,50,50);
+	sys.PrintDatalog("SITE[%d] %d time meas volt(PIN_ADOUT): %f, trimdata:%x \n", SITE_ID, iCount, PpmuResult[0].dbValue, ulTrimData);
+	iCount++;
+	CurVolt = PpmuResult[0].dbValue;
+	return gTrimOK_Count[ulSite];
+}
+int Minfind(ULONG ulSite,  ULONG trimdata[], double volt_test[],double VOLTref, int length)
+{
+	ULONG MINTrimData[length]={0};
+	double MINvolt_test[length]={0};
+	double MINvoltref;
+//	ULONG MINnum = num;
+
+//	ULONG length=sizeof(trimdata)/sizeof(ULONG);
+	memcpy(MINTrimData,trimdata,length*sizeof(ULONG));
+	memcpy(MINvolt_test,volt_test,length*sizeof(double));
+	minOK_Count[ulSite]=0;
+
+    MINvoltref=VOLTref;
+
+    double MINVOT;
+    MINVOT=fabs(MINvolt_test[0]-MINvoltref);
+	for(int j=1; j<length-1; j++)
+	{
+		if(fabs(MINvolt_test[j] - MINvoltref) < MINVOT)
+		{
+			MINVOT = fabs(MINvolt_test[j]-MINvoltref);
+			minOK_Count[ulSite]=j;
+		}
+
+	}
+	return minOK_Count[ulSite];
+}
+
+USER_CODE void OSN()
+{
+	TEST_BEGIN
+	vector<ST_MEAS_RESULT>  N_PPMU_RESULT;
+
+	ppmu.Signal("ALLPIN").Connect().SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(2000);
+
+	ppmu.Signal("P01").SetMode("FIMV").CurrForce(-100.0e-6).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(0,N_PPMU_RESULT,1);
+	ppmu.Signal("P01").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P02").SetMode("FIMV").CurrForce(-100.0e-6).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(1,N_PPMU_RESULT,1);
+	ppmu.Signal("P02").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P03").SetMode("FIMV").CurrForce(-100.0e-6).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(2,N_PPMU_RESULT,1);
+	ppmu.Signal("P03").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P04").SetMode("FIMV").CurrForce(-100.0e-6).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(3,N_PPMU_RESULT,1);
+	ppmu.Signal("P04").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P05").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(4,N_PPMU_RESULT,1);
+	ppmu.Signal("P05").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P06").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(5,N_PPMU_RESULT,1);
+	ppmu.Signal("P06").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P08").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(6,N_PPMU_RESULT,1);
+	ppmu.Signal("P08").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("VDD").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(7,N_PPMU_RESULT,1);
+	ppmu.Signal("VDD").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P10").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(8,N_PPMU_RESULT,1);
+	ppmu.Signal("P10").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P11").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(9,N_PPMU_RESULT,1);
+	ppmu.Signal("P11").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P12").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(10,N_PPMU_RESULT,1);
+	ppmu.Signal("P12").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P13").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(11,N_PPMU_RESULT,1);
+	ppmu.Signal("P13").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P14").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(12,N_PPMU_RESULT,1);
+	ppmu.Signal("P14").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P15").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(13,N_PPMU_RESULT,1);
+	ppmu.Signal("P15").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P16").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(14,N_PPMU_RESULT,1);
+	ppmu.Signal("P16").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P17").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(15,N_PPMU_RESULT,1);
+	ppmu.Signal("P17").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P18").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(16,N_PPMU_RESULT,1);
+	ppmu.Signal("P18").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P19").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(17,N_PPMU_RESULT,1);
+	ppmu.Signal("P19").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("P20").SetMode("FIMV").CurrForce(-1.0e-4).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(18,N_PPMU_RESULT,1);
+	ppmu.Signal("P20").SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+
+	ppmu.Signal("ALLPIN").Connect().SetMode("FVMI").VoltForce(0.0).CurrRange(2.0e-4).VoltClamp(2,-2).Execute();
+	sys.DelayUs(2000);
+	ppmu.Signal("ALLPIN").SetMode("FNMV").Execute();
+	sys.DelayUs(2000);
+	ppmu.Signal("ALLPIN").DisConnect();
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+
+USER_CODE void Vvref_test() {
+	TEST_BEGIN
+	vector<ST_MEAS_RESULT> PpmuResult1;
+	vector<ST_MEAS_RESULT> PpmuResult;
+//	ULONG ulTrimData_temp=0x00;
+
+	gVrefData[SITE_NUM] = {0x0000};
+	iCount = 0;
+	double dbCurvolt = 0.0;
+
+	ULONG MIN_trimData[6]={0};
+	double MIN_CurVolt[6]={0};
+	int MIN_i = 0;
+
+	ULONG ulTrimData = 0x0000, ulTrimStart = 0x00FF; // ulTrimEnd = 0x3FFD;
+	ulTrimDataOk1 = 0, ulTrimDataOk2 = 0;
+	dbTrimValue1 = 0, dbTrimValue2 = 0;
+
+	ppmu.Signal("DIO_GRP_VREF").Connect();
+	sys.DelayUs(2000);
+	ppmu.Signal("PIN_VREF").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+
+FOR_EACH_SITE_START(SITE,SITE_ID)
+	//first time: run pat, and meas volt of P09
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(1000);
+
+//	Plvl_Set("PIN_VREF");
+	dio.Pattern("Vvref_Pat").Test();
+	sys.DelayUs(1000);
+
+//	ppmu.Signal("PIN_VREF").SetMode("FNMV").CurrRange(0.04).Execute();
+	ppmu.Signal("PIN_VREF").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(PpmuResult1,MEAS_AVG,50,50);
+
+	sys.PrintDatalog("SITE[%d] Vref first time (0000 0000 1111 1111--00FF) means volt(PIN_VREF): %f \n", SITE_ID, PpmuResult1[0].dbValue);
+
+	//update pat data, run pat, and meas volt of PIN_VREF
+	//////////////////////////////////////////////////////////
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	ulTrimData = 0x0000;  //0000 0000 0000 0000   初始值
+	ulTrimData = ulTrimData | 0x0008; //bit 3置1
+	TrimvoltProcess(ulTrimData, SITE_ID, "Vvref_Pat", dbCurvolt);
+	MIN_trimData[0]=ulTrimData;
+	MIN_CurVolt[0]=dbCurvolt;
+	if(dbCurvolt > Vvref_VOLT125 * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFFF7; //bit 3置0
+	}
+
+	ulTrimData = ulTrimData | 0x0004; //bit 2置1
+	TrimvoltProcess(ulTrimData, SITE_ID, "Vvref_Pat", dbCurvolt);
+	MIN_trimData[1]=ulTrimData;
+	MIN_CurVolt[1]=dbCurvolt;
+	if(dbCurvolt > Vvref_VOLT125 * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFFFB; //bit 2置0
+	}
+
+	ulTrimData = ulTrimData | 0x0002; //bit 1置1
+	TrimvoltProcess(ulTrimData, SITE_ID, "Vvref_Pat", dbCurvolt);
+	MIN_trimData[2]=ulTrimData;
+	MIN_CurVolt[2]=dbCurvolt;
+	if(dbCurvolt > Vvref_VOLT125 * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFFFD; //bit 1置0
+	}
+
+	ulTrimData = ulTrimData | 0x0001; //bit 0置1
+	TrimvoltProcess(ulTrimData, SITE_ID, "Vvref_Pat", dbCurvolt);
+	MIN_trimData[3]=ulTrimData;
+	MIN_CurVolt[3]=dbCurvolt;
+	if(dbCurvolt > Vvref_VOLT125 * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFFFE; //bit 0置0
+	}
+	TrimvoltProcess(ulTrimData, SITE_ID, "Vvref_Pat", dbCurvolt);
+	MIN_trimData[4]=ulTrimData;
+	MIN_CurVolt[4]=dbCurvolt;
+
+sys.DelayUs(2);
+
+    int ulTrimDataLength = sizeof(MIN_trimData)/sizeof(ULONG);
+    MIN_i = Minfind(SITE_ID, MIN_trimData, MIN_CurVolt, Vvref_VOLT125 ,ulTrimDataLength);
+    gVrefData[SITE_ID] = MIN_trimData[MIN_i];
+
+
+//the last time trim and judge
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData[SITE_ID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("Vvref_Pat", iLen, ch);
+
+	Plvl_Set("PIN_VREF");
+	dio.Pattern("Vvref_Pat").Run("cycle_start").WaitEnd();
+	sys.DelayUs(1000);
+
+	PpmuResult1.clear();
+//	ppmu.Signal("PIN_VREF").SetMode("FNMV").CurrRange(0.04).Execute();
+	ppmu.Signal("PIN_VREF").SetMode("FNMV").Execute();
+	sys.DelayUs(2000);
+	ppmu.Measure(PpmuResult1,MEAS_AVG,50,50);
+
+	sys.PrintDatalog("SITE[%d] Vvref The last time meas volt(PIN_VREF): %f, TrimData:%x \n", SITE_ID, PpmuResult1[0].dbValue, gVrefData[SITE_ID]);
+
+	binObj.CheckResultAndBin(0, PpmuResult1, 1); //select site时,必须放在for_each里面
+
+	PpmuResult1[0].dbValue = (double)gVrefData[SITE_ID];
+	binObj.CheckResultAndBin(1, PpmuResult1, 1);
+	cout << hex << "!!!!!!!!!!!![] Site" << SITE_ID << ", trimdataT:" << gVrefData[SITE_ID] << endl;
+
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(10000);
+
+    NEXT_SITE
+
+	ulTrimData = ulTrimStart;
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(ulTrimData);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("Vvref_Pat", iLen, ch);
+
+	dio.Pattern("VDD_init").Test();
+	sys.DelayUs(10000);
+
+	ppmu.Signal("DIO_GRP_VREF").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_GRP_VREF").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_GRP_VREF").DisConnect();
+	sys.DelayUs(2000);
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void SetPassBin() {
+	TEST_BEGIN
+
+	// TODO Edit your code here
+	binObj.SetBin(1);
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Hrc_test() {
+	TEST_BEGIN
+	vector<ST_MEAS_RESULT> stTMUMeasResult;
+
+//	gFrefDataH[0] = {0x4400};
+	iCount = 0;
+	double dbCurfre = 0.0;
+
+	ULONG MIN_trimData[16]={0};
+	double MIN_CurVolt[16]={0};
+	int MIN_i = 0;
+
+	ULONG ulTrimData = 0x0000, ulTrimStart = 0x4400; // ulTrimEnd = 0x3FFD;
+//	ulTrimDataOk1 = 0, ulTrimDataOk2 = 0;
+//	dbTrimValue1 = 0, dbTrimValue2 = 0;
+
+	tmu.SetupTmuOutputCh(1, 1, 3, 27);//  CH27=TMU3=PIN5---HCLK
+	tmu.Connect("TMU_CH27");
+	tmu.Freq().Signal("TMU_CH27").SetTrigLevel(2.5).SetTrigSlope(TMU_SLOPE_POS).SetSampleSize(10).SetArmSize(5).SetTimeOut(100).SetVoltClamp(6, -1.5).Execute();
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+//	ppmu.Signal("P13").SetMode("FNMV").Execute();
+//	sys.DelayUs(1000);
+
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+
+FOR_EACH_SITE_START(SITE,SITE_ID)
+	//first time: run pat, and meas volt of P09
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(1000);
+
+	dio.Pattern("Hrc_Pat").Test();
+	sys.DelayUs(10000);
+
+	tmu.Freq().Signal("TMU_CH27").StartMeas();
+	tmu.Freq().Signal("TMU_CH27").GetMeasResult(stTMUMeasResult);
+//	tmu.DisConnect("TMU_CH09");
+	sys.DelayUs(10000);
+
+	sys.PrintDatalog("SITE[%d] Fref first time (0100 0100 0000 0000 --4400) means freq (P13/P14): %f \n", SITE_ID, stTMUMeasResult[0].dbValue);
+
+	//update pat data, run pat, and meas volt of PIN_VREF
+	//////////////////////////////////////////////////////////
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	ulTrimData = 0x4400;  //0000 010 0 0000 0000   初始值
+
+	ulTrimData = ulTrimData | 0x0100; //bit 8置1
+	TrimfreProcessH(ulTrimData, SITE_ID, "Hrc_Pat", dbCurfre);
+	MIN_trimData[0]=ulTrimData;
+	MIN_CurVolt[0]=dbCurfre;
+	if(dbCurfre < FvrefH * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFEFF; //bit 8置0
+	}
+
+	ulTrimData = ulTrimData | 0x0080; //bit 7置1
+	TrimfreProcessH(ulTrimData, SITE_ID, "Hrc_Pat", dbCurfre);
+	MIN_trimData[1]=ulTrimData;
+	MIN_CurVolt[1]=dbCurfre;
+	if(dbCurfre < FvrefH * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFF7F; //bit 7置0
+	}
+
+	ulTrimData = ulTrimData | 0x0040; //bit 6置1
+	TrimfreProcessH(ulTrimData, SITE_ID, "Hrc_Pat", dbCurfre);
+	MIN_trimData[2]=ulTrimData;
+	MIN_CurVolt[2]=dbCurfre;
+	if(dbCurfre < FvrefH * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFFBF; //bit 6置0
+	}
+
+	ulTrimData = ulTrimData | 0x0020; //bit 5置1
+	TrimfreProcessH(ulTrimData, SITE_ID, "Hrc_Pat", dbCurfre);
+	MIN_trimData[3]=ulTrimData;
+	MIN_CurVolt[3]=dbCurfre;
+	if(dbCurfre < FvrefH * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFFDF; //bit 5置0
+	}
+
+	ulTrimData = ulTrimData | 0x0010; //bit 4置1
+	TrimfreProcessH(ulTrimData, SITE_ID, "Hrc_Pat", dbCurfre);
+	MIN_trimData[4]=ulTrimData;
+	MIN_CurVolt[4]=dbCurfre;
+	if(dbCurfre < FvrefH * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFFEF; //bit 4置0
+	}
+
+	ulTrimData = ulTrimData | 0x0008; //bit 3置1
+	TrimfreProcessH(ulTrimData, SITE_ID, "Hrc_Pat", dbCurfre);
+	MIN_trimData[5]=ulTrimData;
+	MIN_CurVolt[5]=dbCurfre;
+	if(dbCurfre < FvrefH * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFFF7; //bit 3置0
+	}
+
+	ulTrimData = ulTrimData | 0x0004; //bit 2置1
+	TrimfreProcessH(ulTrimData, SITE_ID, "Hrc_Pat", dbCurfre);
+	MIN_trimData[6]=ulTrimData;
+	MIN_CurVolt[6]=dbCurfre;
+	if(dbCurfre < FvrefH * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFFFB; //bit 2置0
+	}
+
+	ulTrimData = ulTrimData | 0x0002; //bit 1置1
+	TrimfreProcessH(ulTrimData, SITE_ID, "Hrc_Pat", dbCurfre);
+	MIN_trimData[7]=ulTrimData;
+	MIN_CurVolt[7]=dbCurfre;
+	if(dbCurfre < FvrefH * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFFFD; //bit 1置0
+	}
+
+	ulTrimData = ulTrimData | 0x0001; //bit 0置1
+	TrimfreProcessH(ulTrimData, SITE_ID, "Hrc_Pat", dbCurfre);
+	MIN_trimData[8]=ulTrimData;
+	MIN_CurVolt[8]=dbCurfre;
+	if(dbCurfre < FvrefH * (1 + 0.01))
+	{
+		ulTrimData = ulTrimData & 0xFFFE; //bit 0置0
+	}
+	TrimfreProcessH(ulTrimData, SITE_ID, "Hrc_Pat", dbCurfre);
+	MIN_trimData[9]=ulTrimData;
+	MIN_CurVolt[9]=dbCurfre;
+
+sys.DelayUs(2);
+
+    int ulTrimDataLength = sizeof(MIN_trimData)/sizeof(ULONG);
+    MIN_i = Minfind(SITE_ID, MIN_trimData, MIN_CurVolt, FvrefH ,ulTrimDataLength);
+    gFrefDataH[SITE_ID] = MIN_trimData[MIN_i];
+
+
+//the last time trim and judge
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gFrefDataH[SITE_ID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("Hrc_Pat", iLen, ch);
+
+//	Plvl_Set("P09");
+	dio.Pattern("Hrc_Pat").Run("cycle_start").WaitEnd();
+	sys.DelayUs(1000);
+
+	tmu.Freq().Signal("TMU_CH27").StartMeas();
+	tmu.Freq().Signal("TMU_CH27").GetMeasResult(stTMUMeasResult);
+	tmu.DisConnect("TMU_CH27");
+	sys.DelayUs(10000);
+
+	sys.PrintDatalog("SITE[%d] Fvref The last time means Fre (P13/P14): %f, TrimData:%x, gTrimOK_Count:%d \n", SITE_ID, stTMUMeasResult[0].dbValue, gFrefDataH[SITE_ID],gFTrimOK_Count[SITE_ID]);
+
+	gTrimOK_Count[SITE_ID] = 0;
+
+	binObj.CheckResultAndBin(0, stTMUMeasResult, 1); //select site时,必须放在for_each里面
+
+	stTMUMeasResult[0].dbValue = (double)gFrefDataH[SITE_ID];
+	binObj.CheckResultAndBin(1, stTMUMeasResult, 1);
+	cout << hex << "!!!!!!!!!!!![] Site" << SITE_ID << ", trimdataT:" << gFrefDataH[SITE_ID] << endl;
+
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(10000);
+
+    NEXT_SITE
+
+	ulTrimData = ulTrimStart;
+
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(ulTrimData);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("Hrc_Pat", iLen, ch);
+
+	dio.Pattern("VDD_init").Test();
+	sys.DelayUs(10000);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Lrc_test() {
+	TEST_BEGIN
+
+	vector<ST_MEAS_RESULT> stTMUMeasResult;
+
+	int iCount_k = 0;
+//	iCount = 0;
+	double dbCurfre = 0.0;
+
+	ULONG MIN_trimData[16]={0};
+	double MIN_CurVolt[16]={0};
+	int MIN_i = 0;
+
+	ULONG ulTrimData = 0x0000, ulTrimStart = 0x0400; // ulTrimEnd = 0x3FFD;
+//	ulTrimDataOk1 = 0, ulTrimDataOk2 = 0;
+//	dbTrimValue1 = 0, dbTrimValue2 = 0;
+
+	tmu.SetupTmuOutputCh(1, 1, 2, 26);//  CH26=TMU0=PIN6----LCLK
+	tmu.Connect("TMU_CH26");
+	tmu.Freq().Signal("TMU_CH26").SetTrigLevel(2.5).SetTrigSlope(TMU_SLOPE_POS).SetSampleSize(10).SetArmSize(5).SetTimeOut(100).SetVoltClamp(6, -1.5).Execute();
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+//	ppmu.Signal("P13").SetMode("FNMV").Execute();
+//	sys.DelayUs(1000);
+
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+
+FOR_EACH_SITE_START(SITE,SITE_ID)
+	//first time: run pat, and meas volt of P09
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(1000);
+
+	dio.Pattern("Lrc_Pat").Test();
+	sys.DelayUs(10000);
+
+	tmu.Freq().Signal("TMU_CH26").StartMeas();
+	tmu.Freq().Signal("TMU_CH26").GetMeasResult(stTMUMeasResult);
+//	tmu.DisConnect("TMU_CH09");
+	sys.DelayUs(10000);
+
+	sys.PrintDatalog("SITE[%d] Fref first time (0000 0100 0000 0000 --0400) means freq (P13/P14): %f \n", SITE_ID, stTMUMeasResult[0].dbValue);
+
+	//update pat data, run pat, and meas volt of PIN_VREF
+	//////////////////////////////////////////////////////////
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+	ULONG F_TtimData[8];
+	int k[8]={0};
+
+	ulTrimData = 0x0000;  //0000 0000 0000 0000   初始值
+//    for(int i=0;i<128;i++)
+//    {
+//		TrimfreProcessL(ulTrimData, SITE_ID, "Lrc_Pat", dbCurfre);
+//    	ulTrimData=ulTrimData+1;
+//    }
+
+	F_TtimData[0]=0X0020;
+	F_TtimData[1]=0X0028;
+	F_TtimData[2]=0X0030;
+	F_TtimData[3]=0X0038;
+	F_TtimData[4]=0X0000;
+	F_TtimData[5]=0X0008;
+	F_TtimData[6]=0X0010;
+	F_TtimData[7]=0X0018;
+
+	for(int i=3;i<7;i++)
+	{
+		ulTrimData =F_TtimData[i];
+		TrimfreProcessL(ulTrimData, SITE_ID, "Lrc_Pat", dbCurfre);
+		if(dbCurfre>27000 && dbCurfre<31248)
+        {
+             k[iCount_k]=i;
+             iCount_k++;
+        }
+	}
+	if(iCount_k < 1)
+	 {
+		goto Lrc_1;
+	 }
+	else
+	{
+	for(int i=0;i<iCount_k;i++)
+	{
+		ulTrimData =F_TtimData[k[i]];
+		ulTrimData = ulTrimData | 0x0004; //bit 2置1
+		TrimfreProcessL(ulTrimData, SITE_ID, "Lrc_Pat", dbCurfre);
+		MIN_trimData[4*i]=ulTrimData;
+		MIN_CurVolt[4*i]=dbCurfre;
+		if(dbCurfre > FvrefL * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFB; //bit 2置0
+		}
+
+		ulTrimData = ulTrimData | 0x0002; //bit 1置1
+		TrimfreProcessL(ulTrimData, SITE_ID, "Lrc_Pat", dbCurfre);
+		MIN_trimData[4*i+1]=ulTrimData;
+		MIN_CurVolt[4*i+1]=dbCurfre;
+		if(dbCurfre > FvrefL * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFD; //bit 1置0
+		}
+
+		ulTrimData = ulTrimData | 0x0001; //bit 0置1
+		TrimfreProcessL(ulTrimData, SITE_ID, "Lrc_Pat", dbCurfre);
+		MIN_trimData[4*i+2]=ulTrimData;
+		MIN_CurVolt[4*i+2]=dbCurfre;
+		if(dbCurfre > FvrefL * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFE; //bit 0置0
+		}
+		TrimfreProcessL(ulTrimData, SITE_ID, "Lrc_Pat", dbCurfre);
+		MIN_trimData[4*i+3]=ulTrimData;
+		MIN_CurVolt[4*i+3]=dbCurfre;
+
+	}
+	sys.PrintDatalog("SITE[%d] iCount_k:%d\n", SITE_ID, iCount_k);
+	iCount_k=0;
+
+sys.DelayUs(2);
+
+    int ulTrimDataLength = sizeof(MIN_trimData)/sizeof(ULONG);
+    MIN_i = Minfind(SITE_ID, MIN_trimData, MIN_CurVolt, FvrefL ,ulTrimDataLength);
+    gFrefDataL[SITE_ID] = MIN_trimData[MIN_i];
+}
+
+Lrc_1:
+//the last time trim and judge
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gFrefDataL[SITE_ID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("Lrc_Pat", iLen, ch);
+
+//	Plvl_Set("P09");
+	dio.Pattern("Lrc_Pat").Run("cycle_start").WaitEnd();
+	sys.DelayUs(1000);
+
+	tmu.Freq().StartMeas();
+	tmu.Freq().GetMeasResult(stTMUMeasResult);
+	tmu.DisConnect("TMU_CH26");
+	sys.DelayUs(10000);
+
+	sys.PrintDatalog("SITE[%d] Fvref The last time means Fre (P13/P14): %f, TrimData:%x, gTrimOK_Count:%d \n", SITE_ID, stTMUMeasResult[0].dbValue, gFrefDataL[SITE_ID],gFTrimOK_Count[SITE_ID]);
+
+	gTrimOK_Count[SITE_ID] = 0;
+
+	binObj.CheckResultAndBin(0, stTMUMeasResult, 1); //select site时,必须放在for_each里面
+
+	stTMUMeasResult[0].dbValue = (double)gFrefDataL[SITE_ID];
+	binObj.CheckResultAndBin(1, stTMUMeasResult, 1);
+	cout << hex << "!!!!!!!!!!!![] Site" << SITE_ID << ", trimdataT:" << gFrefDataL[SITE_ID] << endl;
+
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(10000);
+
+NEXT_SITE
+
+	ulTrimData = ulTrimStart;
+
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(ulTrimData);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("Lrc_Pat", iLen, ch);
+
+	dio.Pattern("VDD_init").Test();
+	sys.DelayUs(10000);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void AD1P5_test() {
+	TEST_BEGIN
+
+	vector<ST_MEAS_RESULT> PpmuResult1;
+	vector<ST_MEAS_RESULT> PpmuResult;
+
+	int iCount_k = 0;
+	iCount=0;
+	double dbCurvolt = 0.0;
+
+	ULONG MIN_trimData[16]={0};
+	double MIN_CurVolt[16]={0};
+	int MIN_i = 0;
+
+	ULONG ulTrimData = 0x0000, ulTrimStart = 0x00FF; // ulTrimEnd = 0x3FFD;
+
+	ppmu.Signal("DIO_GRP_VOLT").Connect();
+	sys.DelayUs(2000);
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+
+	pinlevel.Signal("DIO_GRP_VOLT").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+
+FOR_EACH_SITE_START(SITE,SITE_ID)
+	//first time: run pat, and meas volt of P09
+	pinlevel.Signal("DIO_GRP_VOLT").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(1000);
+
+//	Plvl_Set("PIN_VREF");
+	dio.Pattern("AD1p5_Pat").Test();
+	sys.DelayUs(1000);
+
+//	ppmu.Signal("PIN_VREF").SetMode("FNMV").CurrRange(0.04).Execute();
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(PpmuResult1,MEAS_AVG,50,50);
+
+	sys.PrintDatalog("SITE[%d] Vref first time (0000 0000 0000 0000--00FF) means volt(PIN_ADOUT): %f \n", SITE_ID, PpmuResult1[0].dbValue);
+
+	//update pat data, run pat, and meas volt of PIN_VREF
+	//////////////////////////////////////////////////////////
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+	ULONG V_TtimData[8];
+	int k[8]={0};
+
+	ulTrimData = 0x0000;  //0000 0000 0000 0000   初始值
+//    for(int i=0;i<128;i++)
+//    {
+//    	TrimvoltProcess04(ulTrimData, SITE_ID, "AD1p5_Pat", dbCurvolt);
+//    	ulTrimData=ulTrimData+1;
+//    }
+//
+	V_TtimData[0]=0X0020;
+	V_TtimData[1]=0X0028;
+	V_TtimData[2]=0X0030;
+	V_TtimData[3]=0X0038;
+	V_TtimData[4]=0X0000;
+	V_TtimData[5]=0X0008;
+	V_TtimData[6]=0X0010;
+	V_TtimData[7]=0X0018;
+	for(int i=3;i<8;i++)
+	{
+		ulTrimData =V_TtimData[i];
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD1p5_Pat", dbCurvolt);
+        if(dbCurvolt>1.46 && dbCurvolt<1.50)
+        {
+             k[iCount_k]=i;
+             iCount_k++;
+        }
+	}
+	if(iCount_k < 1)
+	 {
+		goto v1p5_1;
+	 }
+	else
+	{
+	for(int i=0;i<iCount_k;i++)
+	{
+		ulTrimData =V_TtimData[k[i]];
+		ulTrimData = ulTrimData | 0x0004; //bit 2置1
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD1p5_Pat", dbCurvolt);
+		MIN_trimData[4*i]=ulTrimData;
+		MIN_CurVolt[4*i]=dbCurvolt;
+		if(dbCurvolt > Vvref_VOLT15 * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFB; //bit 2置0
+		}
+
+		ulTrimData = ulTrimData | 0x0002; //bit 1置1
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD1p5_Pat", dbCurvolt);
+		MIN_trimData[4*i+1]=ulTrimData;
+		MIN_CurVolt[4*i+1]=dbCurvolt;
+		if(dbCurvolt > Vvref_VOLT15 * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFD; //bit 1置0
+		}
+
+		ulTrimData = ulTrimData | 0x0001; //bit 0置1
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD1p5_Pat", dbCurvolt);
+		MIN_trimData[4*i+2]=ulTrimData;
+		MIN_CurVolt[4*i+2]=dbCurvolt;
+		if(dbCurvolt > Vvref_VOLT15 * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFE; //bit 0置0
+		}
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD1p5_Pat", dbCurvolt);
+		MIN_trimData[4*i+3]=ulTrimData;
+		MIN_CurVolt[4*i+3]=dbCurvolt;
+
+	}
+	sys.PrintDatalog("SITE[%d] iCount_k:%d\n", SITE_ID, iCount_k);
+	iCount_k=0;
+
+sys.DelayUs(2);
+
+    int ulTrimDataLength = sizeof(MIN_trimData)/sizeof(ULONG);
+    MIN_i = Minfind(SITE_ID, MIN_trimData, MIN_CurVolt, Vvref_VOLT15 ,ulTrimDataLength);
+    gVrefData1P5[SITE_ID] = MIN_trimData[MIN_i];
+
+	}
+v1p5_1:
+//the last time trim and judge
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData1P5[SITE_ID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("AD1p5_Pat", iLen, ch);
+
+	Plvl_Set("PIN_ADOUT");
+	dio.Pattern("AD1p5_Pat").Run("cycle_start").WaitEnd();
+	sys.DelayUs(1000);
+
+	PpmuResult1.clear();
+//	ppmu.Signal("PIN_VREF").SetMode("FNMV").CurrRange(0.04).Execute();
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(2000);
+	ppmu.Measure(PpmuResult1,MEAS_AVG,50,50);
+
+	sys.PrintDatalog("SITE[%d] Vvref The last time meas volt(PIN_ADOUT): %f, TrimData:%x \n", SITE_ID, PpmuResult1[0].dbValue, gVrefData1P5[SITE_ID]);
+	binObj.CheckResultAndBin(0, PpmuResult1, 1); //select site时,必须放在for_each里面
+
+	PpmuResult1[0].dbValue = (double)gVrefData1P5[SITE_ID];
+	binObj.CheckResultAndBin(1, PpmuResult1, 1);
+	cout << hex << "!!!!!!!!!!!![] Site" << SITE_ID << ", trimdataT:" << gVrefData1P5[SITE_ID] << endl;
+
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(10000);
+
+    NEXT_SITE
+
+	ulTrimData = ulTrimStart;
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(ulTrimData);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("AD1p5_Pat", iLen, ch);
+
+	dio.Pattern("VDD_init").Test();
+	sys.DelayUs(10000);
+
+	ppmu.Signal("DIO_GRP_VOLT").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_GRP_VOLT").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_GRP_VOLT").DisConnect();
+	sys.DelayUs(2000);
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+
+}
+
+USER_CODE void AD2P0_test() {
+	TEST_BEGIN
+
+	vector<ST_MEAS_RESULT> PpmuResult1;
+
+//	gVrefData2P0[SITE_NUM] = {0x0000};
+//	gTrimOK_Count[SITE_NUM] = {0000};
+	int iCount_k = 0;
+	iCount=0;
+	double dbCurvolt = 0.0;
+
+	ULONG MIN_trimData[16]={0};
+	double MIN_CurVolt[16]={0};
+	int MIN_i = 0;
+
+	ULONG ulTrimData = 0x0000, ulTrimStart = 0x01FF; // ulTrimEnd = 0x3FFD;
+//	ulTrimDataOk1 = 0, ulTrimDataOk2 = 0;
+//	dbTrimValue1 = 0, dbTrimValue2 = 0;
+
+	ppmu.Signal("DIO_GRP_VOLT").Connect();
+	sys.DelayUs(2000);
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+
+	pinlevel.Signal("DIO_GRP_VOLT").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+
+FOR_EACH_SITE_START(SITE,SITE_ID)
+	//first time: run pat, and meas volt of P09
+	pinlevel.Signal("DIO_GRP_VOLT").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(1000);
+
+//	Plvl_Set("PIN_VREF");
+	dio.Pattern("AD2p0_Pat").Test();
+	sys.DelayUs(1000);
+
+//	ppmu.Signal("PIN_VREF").SetMode("FNMV").CurrRange(0.04).Execute();
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(PpmuResult1,MEAS_AVG,50,50);
+
+	sys.PrintDatalog("SITE[%d] Vref first time (0000 0000 0000 0000--00FF) means volt(PIN_ADOUT): %f \n", SITE_ID, PpmuResult1[0].dbValue);
+
+	//update pat data, run pat, and meas volt of PIN_VREF
+	//////////////////////////////////////////////////////////
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+	ULONG V_TtimData[8];
+	int k[8]={0};
+
+	ulTrimData = 0x0100;  //0000 0000 0000 0000   初始值
+//    for(int i=0;i<128;i++)
+//    {
+//    	TrimvoltProcess04(ulTrimData, SITE, "AD2p0_Pat", dbCurvolt);
+//    	ulTrimData=ulTrimData+1;
+//    }
+//
+	V_TtimData[0]=0X0120;
+	V_TtimData[1]=0X0128;
+	V_TtimData[2]=0X0130;
+	V_TtimData[3]=0X0138;
+	V_TtimData[4]=0X0100;
+	V_TtimData[5]=0X0108;
+	V_TtimData[6]=0X0110;
+	V_TtimData[7]=0X0118;
+	for(int i=3;i<8;i++)
+	{
+		ulTrimData =V_TtimData[i];
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD2p0_Pat", dbCurvolt);
+        if(dbCurvolt>1.93 && dbCurvolt<2.0)
+        {
+             k[iCount_k]=i;
+             iCount_k++;
+        }
+	}
+	if(iCount_k < 1)
+	 {
+		goto v2p0_1;
+	 }
+	else
+	{
+	for(int i=0;i<iCount_k;i++)
+	{
+		ulTrimData =V_TtimData[k[i]];
+		ulTrimData = ulTrimData | 0x0004; //bit 2置1
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD2p0_Pat", dbCurvolt);
+		MIN_trimData[4*i]=ulTrimData;
+		MIN_CurVolt[4*i]=dbCurvolt;
+		if(dbCurvolt > Vvref_VOLT20 * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFB; //bit 2置0
+		}
+
+		ulTrimData = ulTrimData | 0x0002; //bit 1置1
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD2p0_Pat", dbCurvolt);
+		MIN_trimData[4*i+1]=ulTrimData;
+		MIN_CurVolt[4*i+1]=dbCurvolt;
+		if(dbCurvolt > Vvref_VOLT20 * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFD; //bit 1置0
+		}
+
+		ulTrimData = ulTrimData | 0x0001; //bit 0置1
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD2p0_Pat", dbCurvolt);
+		MIN_trimData[4*i+2]=ulTrimData;
+		MIN_CurVolt[4*i+2]=dbCurvolt;
+		if(dbCurvolt > Vvref_VOLT20 * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFE; //bit 0置0
+		}
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD2p0_Pat", dbCurvolt);
+		MIN_trimData[4*i+3]=ulTrimData;
+		MIN_CurVolt[4*i+3]=dbCurvolt;
+
+	}
+	sys.PrintDatalog("SITE[%d] iCount_k:%d\n", SITE_ID, iCount_k);
+	iCount_k=0;
+
+sys.DelayUs(2);
+
+    int ulTrimDataLength = sizeof(MIN_trimData)/sizeof(ULONG);
+    MIN_i = Minfind(SITE_ID, MIN_trimData, MIN_CurVolt, Vvref_VOLT20 ,ulTrimDataLength);
+    gVrefData2P0[SITE_ID] = MIN_trimData[MIN_i];
+
+	}
+v2p0_1:
+//the last time trim and judge
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData2P0[SITE_ID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("AD2p0_Pat", iLen, ch);
+
+	Plvl_Set("PIN_ADOUT");
+	dio.Pattern("AD2p0_Pat").Run("cycle_start").WaitEnd();
+	sys.DelayUs(1000);
+
+	PpmuResult1.clear();
+//	ppmu.Signal("PIN_VREF").SetMode("FNMV").CurrRange(0.04).Execute();
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(2000);
+	ppmu.Measure(PpmuResult1,MEAS_AVG,50,50);
+
+	sys.PrintDatalog("SITE[%d] Vvref The last time meas volt(PIN_ADOUT): %f, TrimData:%x \n", SITE_ID, PpmuResult1[0].dbValue, gVrefData2P0[SITE_ID]);
+	binObj.CheckResultAndBin(0, PpmuResult1, 1); //select site时,必须放在for_each里面
+
+	PpmuResult1[0].dbValue = (double)gVrefData2P0[SITE_ID];
+	binObj.CheckResultAndBin(1, PpmuResult1, 1);
+	cout << hex << "!!!!!!!!!!!![] Site" << SITE_ID << ", trimdataT:" << gVrefData2P0[SITE_ID] << endl;
+
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(10000);
+
+    NEXT_SITE
+
+	ulTrimData = ulTrimStart;
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(ulTrimData);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("AD2p0_Pat", iLen, ch);
+
+	dio.Pattern("VDD_init").Test();
+	sys.DelayUs(10000);
+
+	ppmu.Signal("DIO_GRP_VOLT").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_GRP_VOLT").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_GRP_VOLT").DisConnect();
+	sys.DelayUs(2000);
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void AD3P0_test() {
+	TEST_BEGIN
+
+	vector<ST_MEAS_RESULT> PpmuResult1;
+	vector<ST_MEAS_RESULT> PpmuResult;
+
+//	gVrefData3P0[SITE_NUM] = {0x0000};
+	int iCount_k = 0;
+	iCount=0;
+	double dbCurvolt = 0.0;
+
+	ULONG MIN_trimData[16]={0};
+	double MIN_CurVolt[16]={0};
+	int MIN_i = 0;
+
+	ULONG ulTrimData = 0x0200, ulTrimStart = 0x02FF; // ulTrimEnd = 0x3FFD;
+
+	ppmu.Signal("DIO_GRP_VOLT").Connect();
+	sys.DelayUs(2000);
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+
+	pinlevel.Signal("DIO_GRP_VOLT").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+
+FOR_EACH_SITE_START(SITE,SITE_ID)
+	//first time: run pat, and meas volt of P09
+	pinlevel.Signal("DIO_GRP_VOLT").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(1000);
+
+	dio.Pattern("AD3p0_Pat").Test();
+	sys.DelayUs(1000);
+
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+	ppmu.Measure(PpmuResult1,MEAS_AVG,50,50);
+
+	sys.PrintDatalog("SITE[%d] Vref first time (0000 0000 0000 0000--00FF) means volt(PIN_ADOUT): %f \n", SITE_ID, PpmuResult1[0].dbValue);
+
+	//update pat data, run pat, and meas volt of PIN_VREF
+	//////////////////////////////////////////////////////////
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+	ULONG V_TtimData[8];
+	int k[8]={0};
+
+	ulTrimData = 0x0200;  //0000 0000 0000 0000   初始值
+//    for(int i=0;i<64;i++)
+//    {
+//    	TrimvoltProcess04(ulTrimData, SITE, "AD3p0_Pat", dbCurvolt);
+//    	ulTrimData=ulTrimData+1;
+//    }
+
+	V_TtimData[0]=0X0220;
+	V_TtimData[1]=0X0228;
+	V_TtimData[2]=0X0230;
+	V_TtimData[3]=0X0238;
+	V_TtimData[4]=0X0200;
+	V_TtimData[5]=0X0208;
+	V_TtimData[6]=0X0210;
+	V_TtimData[7]=0X0218;
+	for(int i=3;i<8;i++)
+	{
+		ulTrimData =V_TtimData[i];
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD3p0_Pat", dbCurvolt);
+        if(dbCurvolt>2.80 && dbCurvolt<3.0)
+        {
+             k[iCount_k]=i;
+             iCount_k++;
+        }
+	}
+	if(iCount_k < 1)
+	 {
+		goto v3p0_1;
+	 }
+	else
+	{
+	for(int i=0;i<iCount_k;i++)
+	{
+		ulTrimData =V_TtimData[k[i]];
+		ulTrimData = ulTrimData | 0x0004; //bit 2置1
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD3p0_Pat", dbCurvolt);
+		MIN_trimData[4*i]=ulTrimData;
+		MIN_CurVolt[4*i]=dbCurvolt;
+		if(dbCurvolt > Vvref_VOLT30 * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFB; //bit 2置0
+		}
+
+		ulTrimData = ulTrimData | 0x0002; //bit 1置1
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD3p0_Pat", dbCurvolt);
+		MIN_trimData[4*i+1]=ulTrimData;
+		MIN_CurVolt[4*i+1]=dbCurvolt;
+		if(dbCurvolt > Vvref_VOLT30 * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFD; //bit 1置0
+		}
+
+		ulTrimData = ulTrimData | 0x0001; //bit 0置1
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD3p0_Pat", dbCurvolt);
+		MIN_trimData[4*i+2]=ulTrimData;
+		MIN_CurVolt[4*i+2]=dbCurvolt;
+		if(dbCurvolt > Vvref_VOLT30 * (1 + 0.001))
+		{
+			ulTrimData = ulTrimData & 0xFFFE; //bit 0置0
+		}
+		TrimvoltProcess04(ulTrimData, SITE_ID, "AD3p0_Pat", dbCurvolt);
+		MIN_trimData[4*i+3]=ulTrimData;
+		MIN_CurVolt[4*i+3]=dbCurvolt;
+
+	}
+	sys.PrintDatalog("SITE[%d] iCount_k:%d\n", SITE_ID, iCount_k);
+	iCount_k=0;
+
+sys.DelayUs(2);
+
+    int ulTrimDataLength = sizeof(MIN_trimData)/sizeof(ULONG);
+    MIN_i = Minfind(SITE_ID, MIN_trimData, MIN_CurVolt, Vvref_VOLT30 ,ulTrimDataLength);
+    gVrefData3P0[SITE_ID] = MIN_trimData[MIN_i];
+
+	}
+v3p0_1:
+//the last time trim and judge
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(gVrefData3P0[SITE_ID]);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("AD3p0_Pat", iLen, ch);
+
+	Plvl_Set("PIN_ADOUT");
+	dio.Pattern("AD3p0_Pat").Run("cycle_start").WaitEnd();
+	sys.DelayUs(1000);
+
+	PpmuResult1.clear();
+//	ppmu.Signal("PIN_VREF").SetMode("FNMV").CurrRange(0.04).Execute();
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(2000);
+	ppmu.Measure(PpmuResult1,MEAS_AVG,50,50);
+
+	sys.PrintDatalog("SITE[%d] Vvref The last time meas volt(PIN_ADOUT): %f, TrimData:%x \n", SITE_ID, PpmuResult1[0].dbValue, gVrefData3P0[SITE_ID]);
+	binObj.CheckResultAndBin(0, PpmuResult1, 1); //select site时,必须放在for_each里面
+
+	PpmuResult1[0].dbValue = (double)gVrefData3P0[SITE_ID];
+	binObj.CheckResultAndBin(1, PpmuResult1, 1);
+	cout << hex << "!!!!!!!!!!!![] Site" << SITE_ID << ", trimdataT:" << gVrefData3P0[SITE_ID] << endl;
+
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(10000);
+
+    NEXT_SITE
+
+	ulTrimData = ulTrimStart;
+	char ch[UPDATE_VCT_NUM16];
+	char *chEnd, *pch;
+	const char *pTemp;
+	int iLen;
+	string strData;
+
+	memset(ch, 0, UPDATE_VCT_NUM16);
+	strData = to_string(ulTrimData);
+	pTemp = strData.c_str();
+	ltoa(strtol(pTemp, &chEnd, 10), ch, 2);
+	pch = &ch[0];
+	iLen = strlen(pch);
+
+	UpdateVvref("AD3p0_Pat", iLen, ch);
+
+	dio.Pattern("VDD_init").Test();
+	sys.DelayUs(10000);
+
+	ppmu.Signal("DIO_GRP_VOLT").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_GRP_VOLT").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_GRP_VOLT").DisConnect();
+	sys.DelayUs(2000);
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Ersf1all_test() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	UpdatevrefPat("Ers_f1_all_Pat",SITE_ID);
+	dio.Pattern("Ers_f1_all_Pat").SetTimeOut(10000).Run();//Test();
+	dio.Pattern("Ers_f1_all_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Ersf1inf_test() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	UpdatevrefPat("Ers_f1_inf_Pat",SITE_ID);
+	dio.Pattern("Ers_f1_inf_Pat").SetTimeOut(10000).Run();//Test();
+	dio.Pattern("Ers_f1_inf_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Ers_config_test() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	UpdatevrefPat("Ers_config_Pat",SITE_ID);
+	dio.Pattern("Ers_config_Pat").Test();
+	dio.Pattern("Ers_config_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Prg_config03_test() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	sys.PrintDatalog("SITE[%d] ,gVrefData:%x, gVrefData1p5:%x,gVrefData2p0:%x,gVrefData3p0:%x\n", SITE_ID,gVrefData[SITE_ID],gVrefData1P5[SITE_ID],gVrefData2P0[SITE_ID],gVrefData3P0[SITE_ID]);
+    sys.PrintDatalog("SITE[%d] ,gFrefDataL:%x,gFrefDataH:%x \n", SITE_ID,gFrefDataL[SITE_ID],gFrefDataH[SITE_ID]);
+	UpdatevrefPat("Prg_config03_Pat",SITE_ID);
+    UpdateClkPat("Prg_config03_Pat",SITE_ID);
+	UpdatevrefPat2("Prg_config03_Pat",SITE_ID);
+
+	dio.Pattern("Prg_config03_Pat").SetTimeOut(10000).Run();//Test();
+	dio.Pattern("Prg_config03_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Test_clk_test() {
+	TEST_BEGIN
+
+	vector<ST_MEAS_RESULT> stTMUMeasResult;
+	vector<ST_MEAS_RESULT> stTMUMeasResult1;
+
+	tmu.SetupTmuOutputCh(1, 1, 2, 26);//  CH26=TMU2=PIN6---LCLK
+	tmu.Connect("TMU_CH26");
+	tmu.SetupTmuOutputCh(1, 1, 3, 27);//  CH27=TMU3=PIN5---HCLK
+	tmu.Connect("TMU_CH27");
+	tmu.Freq().Signal("TMU_CH26").SetTrigLevel(2.5).SetTrigSlope(TMU_SLOPE_POS).SetSampleSize(10).SetArmSize(5).SetTimeOut(100).SetVoltClamp(6, -1.5).Execute();
+	tmu.Freq().Signal("TMU_CH27").SetTrigLevel(2.5).SetTrigSlope(TMU_SLOPE_POS).SetSampleSize(10).SetArmSize(5).SetTimeOut(100).SetVoltClamp(6, -1.5).Execute();
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+//	ppmu.Signal("P13").SetMode("FNMV").Execute();
+//	sys.DelayUs(1000);
+
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+
+FOR_EACH_SITE_START(SITE,SITE_ID)
+	//first time: run pat, and meas volt of P09
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(1000);
+
+	UpdatevrefPat("Test_clk_Pat",SITE_ID);   // 此处向量替换的还是vref
+	dio.Pattern("Test_clk_Pat").Test();
+	sys.DelayUs(20000);
+
+	tmu.Freq().Signal("TMU_CH27").StartMeas();
+	tmu.Freq().GetMeasResult(stTMUMeasResult);
+	sys.DelayUs(10000);
+
+	tmu.Freq().Signal("TMU_CH26").StartMeas();
+	tmu.Freq().GetMeasResult(stTMUMeasResult1);
+	sys.DelayUs(2000);
+
+	tmu.DisConnect("TMU_CH27");
+	tmu.DisConnect("TMU_CH26");
+//	sys.PrintDatalog("SITE[%d]: FrefH (P13): %f; FrefL (P14): %f \n", SITE_ID, stTMUMeasResult[0].dbValue, stTMUMeasResult1[0].dbValue);
+
+	binObj.CheckResultAndBin(0, stTMUMeasResult, 1); //select site时,必须放在for_each里面
+	binObj.CheckResultAndBin(1, stTMUMeasResult1, 1); //select site时,必须放在for_each里面
+NEXT_SITE
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Ers_config_test1() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	UpdatevrefPat("Ers_config_Pat",SITE_ID);
+	dio.Pattern("Ers_config_Pat").Test();
+	dio.Pattern("Ers_config_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Prg_Config46_test() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	sys.PrintDatalog("SITE[%d] ,gVrefData:%x, gVrefData1p5:%x,gVrefData2p0:%x,gVrefData3p0:%x\n", SITE_ID,gVrefData[SITE_ID],gVrefData1P5[SITE_ID],gVrefData2P0[SITE_ID],gVrefData3P0[SITE_ID]);
+    sys.PrintDatalog("SITE[%d] ,gFrefDataL:%x,gFrefDataH:%x \n", SITE_ID,gFrefDataL[SITE_ID],gFrefDataH[SITE_ID]);
+
+    Updatevref46Pat("Prg_config46_Pat",SITE_ID,gVrefData1P5[SITE_ID]);
+
+	dio.Pattern("Prg_config46_Pat").Test();//SetTimeOut(10000).Run();//Test();
+	dio.Pattern("Prg_config46_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Config1p5_test() {
+	TEST_BEGIN
+
+	vector<ST_MEAS_RESULT> PpmuResult1;
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_GRP_VOLT").Connect();
+	sys.DelayUs(2000);
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+
+FOR_EACH_SITE_START(SITE,SITE_ID)
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(1000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+
+	UpdatevrefPat("Test_vref_Pat",SITE_ID);
+	dio.Pattern("Test_vref_Pat").Test();
+	dio.Pattern("Test_vref_Pat").GetFailResult(FailResult);
+	sys.DelayUs(10000);
+
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").CurrRange(0.04).Execute();
+//	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(5000);
+	ppmu.Signal("PIN_ADOUT").Measure(PpmuResult1,MEAS_AVG,50,50);
+	sys.PrintDatalog("SITE[%d] Vvref The last time meas volt(PIN_ADOUT): %f, TrimData:%x \n", SITE_ID, PpmuResult1[0].dbValue, gVrefData[SITE_ID]);
+
+	binObj.CheckResultAndBin(0, FailResult);
+	binObj.CheckResultAndBin(1, PpmuResult1, 1); //select site时,必须放在for_each里面
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Ers_config_test2() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	UpdatevrefPat("Ers_config_Pat",SITE_ID);
+	dio.Pattern("Ers_config_Pat").Test();
+	dio.Pattern("Ers_config_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Prg_Config46_test2() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	sys.PrintDatalog("SITE[%d] ,gVrefData:%x, gVrefData1p5:%x,gVrefData2p0:%x,gVrefData3p0:%x\n", SITE_ID,gVrefData[SITE_ID],gVrefData1P5[SITE_ID],gVrefData2P0[SITE_ID],gVrefData3P0[SITE_ID]);
+    sys.PrintDatalog("SITE[%d] ,gFrefDataL:%x,gFrefDataH:%x \n", SITE_ID,gFrefDataL[SITE_ID],gFrefDataH[SITE_ID]);
+
+    Updatevref46Pat("Prg_config46_Pat",SITE_ID,gVrefData2P0[SITE_ID]);
+
+	dio.Pattern("Prg_config46_Pat").Test();//SetTimeOut(10000).Run();//Test();
+	dio.Pattern("Prg_config46_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+	// TODO Edit your code here
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Config2p0_test() {
+	TEST_BEGIN
+
+	vector<ST_MEAS_RESULT> PpmuResult1;
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_GRP_VOLT").Connect();
+	sys.DelayUs(2000);
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+
+FOR_EACH_SITE_START(SITE,SITE_ID)
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(1000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+
+	UpdatevrefPat("Test_vref_Pat",SITE_ID);
+	dio.Pattern("Test_vref_Pat").Test();
+	dio.Pattern("Test_vref_Pat").GetFailResult(FailResult);
+	sys.DelayUs(10000);
+
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").CurrRange(0.04).Execute();
+//	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(5000);
+	ppmu.Signal("PIN_ADOUT").Measure(PpmuResult1,MEAS_AVG,50,50);
+	sys.PrintDatalog("SITE[%d] Vvref The last time meas volt(PIN_ADOUT): %f \n", SITE_ID, PpmuResult1[0].dbValue );
+
+	binObj.CheckResultAndBin(0, FailResult);
+	binObj.CheckResultAndBin(1, PpmuResult1, 1); //select site时,必须放在for_each里面
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Ers_config_test3() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	UpdatevrefPat("Ers_config_Pat",SITE_ID);
+	dio.Pattern("Ers_config_Pat").Test();
+	dio.Pattern("Ers_config_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Prg_Config46_test3() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	sys.PrintDatalog("SITE[%d] ,gVrefData:%x, gVrefData1p5:%x,gVrefData2p0:%x,gVrefData3p0:%x\n", SITE_ID,gVrefData[SITE_ID],gVrefData1P5[SITE_ID],gVrefData2P0[SITE_ID],gVrefData3P0[SITE_ID]);
+    sys.PrintDatalog("SITE[%d] ,gFrefDataL:%x,gFrefDataH:%x \n", SITE_ID,gFrefDataL[SITE_ID],gFrefDataH[SITE_ID]);
+
+    Updatevref46Pat("Prg_config46_Pat",SITE_ID,gVrefData3P0[SITE_ID]);
+
+	dio.Pattern("Prg_config46_Pat").Test();//SetTimeOut(10000).Run();//Test();
+	dio.Pattern("Prg_config46_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Config3p0_test() {
+	TEST_BEGIN
+
+	vector<ST_MEAS_RESULT> PpmuResult1;
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_GRP_VOLT").Connect();
+	sys.DelayUs(2000);
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+
+FOR_EACH_SITE_START(SITE,SITE_ID)
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(1000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+
+	UpdatevrefPat("Test_vref_Pat",SITE_ID);
+	dio.Pattern("Test_vref_Pat").Test();
+	dio.Pattern("Test_vref_Pat").GetFailResult(FailResult);
+	sys.DelayUs(10000);
+
+	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").CurrRange(0.04).Execute();
+//	ppmu.Signal("PIN_ADOUT").SetMode("FNMV").Execute();
+	sys.DelayUs(5000);
+	ppmu.Signal("PIN_ADOUT").Measure(PpmuResult1,MEAS_AVG,50,50);
+	sys.PrintDatalog("SITE[%d] Vvref The last time meas volt(PIN_ADOUT): %f\n", SITE_ID, PpmuResult1[0].dbValue);
+
+	binObj.CheckResultAndBin(0, FailResult);
+	binObj.CheckResultAndBin(1, PpmuResult1, 1); //select site时,必须放在for_each里面
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Ersf1all5_test() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	UpdatevrefPat("Ers_f1_all_Pat",SITE_ID);
+	dio.Pattern("Ers_f1_all_Pat").SetTimeOut(10000).Run();//Test();
+	dio.Pattern("Ers_f1_all_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void P2V2_func_test() {
+	TEST_BEGIN
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	UpdatevrefPat("P2_func_Pat",SITE_ID);
+	UpdatevrefPat2("P2_func_Pat",SITE_ID);
+	UpdateHClkPat("P2_func_Pat",SITE_ID);
+	dio.Pattern("P2_func_Pat").Test();
+NEXT_SITE
+
+
+	dio.Pattern("V2_func_Pat").Test();
+	dio.Pattern("V2_func_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Prg_ifen_test() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	sys.PrintDatalog("SITE[%d] ,gVrefData:%x, gVrefData1p5:%x,gVrefData2p0:%x,gVrefData3p0:%x\n", SITE_ID,gVrefData[SITE_ID],gVrefData1P5[SITE_ID],gVrefData2P0[SITE_ID],gVrefData3P0[SITE_ID]);
+    sys.PrintDatalog("SITE[%d] ,gFrefDataL:%x,gFrefDataH:%x \n", SITE_ID,gFrefDataL[SITE_ID],gFrefDataH[SITE_ID]);
+
+    UpdatevrefPat("Prg_ifen_Pat",SITE_ID);
+    UpdatevrefPat2("Prg_ifen_Pat",SITE_ID);
+    UpdateClkPat("Prg_ifen_Pat",SITE_ID);
+    UpdatevrefP1523("Prg_ifen_Pat",SITE_ID);
+    UpdateTrimVerifyPat("Prg_ifen_Pat",SITE_ID);
+
+	dio.Pattern("Prg_ifen_Pat").Test();
+	dio.Pattern("Prg_ifen_Pat").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void HS5129_FUN() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+	vector<ST_MEAS_RESULT>  N_PPMU_RESULT;
+
+	ppmu.Signal("ALLPIN").Connect();
+	sys.DelayUs(2000);
+	ppmu.Signal("VDD").SetMode("FVMV").VoltForce(5.0).CurrRange(200.0e-6).Execute();;
+	ppmu.Signal("P13").SetMode("FVMV").VoltForce(0.0).CurrRange(200.0e-6).Execute();;
+	sys.DelayUs(2000);
+	ppmu.Signal("VDD").Measure(N_PPMU_RESULT);
+	binObj.CheckResultAndBin(0,N_PPMU_RESULT,1);
+
+	ppmu.Signal("VDD").SetMode("FVMV").VoltForce(0.0).CurrRange(200.0e-6).Execute();;
+	ppmu.Signal("P13").SetMode("FVMV").VoltForce(0.0).CurrRange(200.0e-6).Execute();;
+	sys.DelayUs(10000);
+	ppmu.Signal("ALLPIN").DisConnect();
+	sys.DelayUs(2000);
+//
+//	pinlevel.Signal("ALLPIN").Connect();
+//	sys.DelayUs(2000);
+//	pinlevel.Signal("ALLPIN").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4.0).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+//	sys.DelayUs(1000);
+//
+//FOR_EACH_SITE_START(SITE,SITE_ID)
+//
+//	dio.Pattern("HS5129_FUN").Test();
+//	dio.Pattern("HS5129_FUN").GetFailResult(FailResult);
+
+	ppmu.Signal("ALLPIN").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("ALLPIN").SetMode("FNMV").Execute();
+	pinlevel.Signal("ALLPIN").DisConnect();
+	sys.DelayUs(1000);
+//	sys.DelayUs(2000);
+//	binObj.CheckResultAndBin(1, FailResult);
+
+//NEXT_SITE
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Prg_debug() {
+	TEST_BEGIN
+
+	vector<ST_DIO_RESULT> FailResult;
+
+	ppmu.Signal("DIO_TRIM_GRP").Connect();
+	sys.DelayUs(2000);
+
+//	Plvl_Set("DIO_TRIM_GRP");
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4.0).SetVol(1.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(2.5).SetVol(2.0).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(5000);
+
+	pinlevel.Signal("PDA").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(3.5).SetVol(1.0).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(0).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+//	pinlevel.Signal("PDA").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(3.5).SetVol(0.7).SetActiveLoadStatus(ON).SetVt(4.5).SetIoh(-10e-3).SetIol(10e-3).VoltClamp(6.5,-2.0).Execute();
+FOR_EACH_SITE_START(SITE,SITE_ID)
+
+	UpdatevrefPat("HS5129_debug",SITE_ID);
+	dio.Pattern("HS5129_debug").Test();
+	dio.Pattern("HS5129_debug").GetFailResult(FailResult);
+
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_TRIM_GRP").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_TRIM_GRP").DisConnect();
+	sys.DelayUs(2000);
+	binObj.CheckResultAndBin(0, FailResult);
+
+NEXT_SITE
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
+USER_CODE void Test_vref_test() {
+	TEST_BEGIN
+
+	vector<ST_MEAS_RESULT> PpmuResult1;
+	vector<ST_MEAS_RESULT> PpmuResult;
+//	ULONG ulTrimData_temp=0x00;
+
+	ppmu.Signal("DIO_GRP_VREF").Connect();
+	sys.DelayUs(2000);
+	ppmu.Signal("PIN_VREF").SetMode("FNMV").Execute();
+	sys.DelayUs(1000);
+
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+
+FOR_EACH_SITE_START(SITE,SITE_ID)
+	//first time: run pat, and meas volt of P09
+	pinlevel.Signal("DIO_TRIM_GRP").SetMode("DIO").SetVih(4.5).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(2000);
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(5.0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(1000);
+
+//	Plvl_Set("PIN_VREF");
+	dio.Pattern("Test_vref_Pat").Test();
+	sys.DelayUs(1000);
+
+//	ppmu.Signal("PIN_VREF").SetMode("FNMV").CurrRange(0.04).Execute();
+	ppmu.Signal("PIN_VREF").SetMode("FNMV").Execute();
+	sys.DelayUs(2000);
+	ppmu.Measure(PpmuResult1,MEAS_AVG,50,50);
+
+	sys.PrintDatalog("SITE[%d] Vref first time (0000 0000 1111 1111--00FF) means volt(PIN_VREF): %f \n", SITE_ID, PpmuResult1[0].dbValue);
+
+	//update pat data, run pat, and meas volt of PIN_VREF
+	//////////////////////////////////////////////////////////
+	binObj.CheckResultAndBin(0, PpmuResult1, 1); //select site时,必须放在for_each里面
+
+	pinlevel.Signal("VDD").SetMode("DIO").SetVih(0).SetVil(0.0).SetVoh(4).SetVol(1).VoltClamp(6.5, -2).Execute();
+	sys.DelayUs(10000);
+
+	dio.Pattern("VDD_init").Test();
+	sys.DelayUs(10000);
+
+	NEXT_SITE
+
+	ppmu.Signal("DIO_GRP_VREF").SetMode("FVMI").VoltForce(0).CurrRange(0.04).Execute();
+	sys.DelayUs(1000);
+	ppmu.Signal("DIO_GRP_VREF").SetMode("FNMV").Execute();
+	ppmu.Signal("DIO_GRP_VREF").DisConnect();
+	sys.DelayUs(2000);
+
+	TEST_ERROR
+	binObj.HandlerException(0);
+	TEST_END
+}
+
